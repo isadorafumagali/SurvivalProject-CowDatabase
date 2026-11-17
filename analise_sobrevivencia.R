@@ -8,15 +8,15 @@ library(mice)
 library(splines)
 
 
-# Carrega os dados da planilha
+#carrega os dados da planilha
 caminho <- "Downloads/Projeto_Vacas.xlsx"
 dados_raw <- read_excel(caminho)
 
-# 1. Percentual de dados faltantes por variável
+#calcula o percentual de dados faltantes por variável
 missing_summary <- colMeans(is.na(dados_raw)) * 100
 print(round(missing_summary, 2))
 
-# 2. Resumo da variável contínua (leite_dia)
+#resume a variável contínua (leite_dia)
 dados_raw %>%
   summarise(
     Media = mean(leite_dia, na.rm = TRUE),
@@ -25,17 +25,17 @@ dados_raw %>%
     IQR = IQR(leite_dia, na.rm = TRUE)
   )
 
-# 3. Proporção de Censura vs Concepção
+#calcula a proporção de Censura vs Concepção
 table(dados_raw$indic_tempo_concep)
 prop.table(table(dados_raw$indic_tempo_concep)) * 100
 
 
-# 4. Tabela de Variáceis Categórica
+#lista as Variáceis Categóricas
 categoricas <- c("Cidade", "Estacao", "problema_pre_parto", 
                  "problema_pos_parto", "sistema_reproducao", 
                  "tempo_parto_insem", "producao_leite")
 
-# Roda a frequência para todas as categóricas (com NAs)
+#roda a frequência para todas as categóricas (com NAs)
 tabela_cat <- map_df(categoricas, function(var) {
   dados_raw %>%
     count(Categoria = get(var)) %>%
@@ -49,7 +49,7 @@ tabela_cat <- map_df(categoricas, function(var) {
 print(tabela_cat, n = 30)
 
 
-# 5. Min e Max de leite dia
+#calcula o Min e Max de leite dia
 min_max_leite <- dados_raw %>%
   summarise(
     Minimo = min(leite_dia, na.rm = TRUE),
@@ -59,11 +59,11 @@ min_max_leite <- dados_raw %>%
 print(min_max_leite)
 
 
-# Remove registros sem o desfecho (se houver algum NA em tempo ou indicador)
+#remove os registros sem o desfecho no estudo
 dados <- dados_raw %>%
   filter(!is.na(tempo_concep) & !is.na(indic_tempo_concep))
 
-# Converte variáveis categóricas para fatores
+#converte variáveis categóricas para fatores
 dados <- dados %>%
   mutate(
     Estacao = factor(Estacao, labels = c("Outono", "Inverno", "Primavera", "Verão")),
@@ -76,61 +76,60 @@ dados <- dados %>%
   )
 
 
-# --- Imputação Única Robusta com missForest ---
+#semente para a imputação com missForest
 set.seed(123)
 
-# Remove a coluna ID para não enviesar a imputação de padrões
+#remove a coluna ID para não enviesar a imputação de padrões
 dados_para_imputar <- dados %>% select(-ID_vaca)
 
-# Executa o missForest
+#executa o missForest
 imputacao_mf <- missForest(as.data.frame(dados_para_imputar))
 dados_mf <- imputacao_mf$ximp
 
-# Reinsere o ID se necessário
+#reinsere o ID se necessário
 dados_mf$ID_vaca <- dados$ID_vaca
 dados_mf
 
-# --- Análise Não Paramétrica (Kaplan-Meier) ---
+#abaixo segue a Análise Não Paramétrica por Kaplan-Meier após a imputação por missForest
 
-# Criação do objeto de sobrevivência
+#cria o objeto de sobrevivência
 surv_obj_mf <- Surv(time = dados_mf$tempo_concep, event = dados_mf$indic_tempo_concep)
 
-# 1. Curva Kaplan-Meier por Problema Pós-Parto
+#curva Kaplan-Meier por Problema Pós-Parto
 fit_km_pos <- survfit(surv_obj_mf ~ problema_pos_parto, data = dados_mf)
 
-# Plot da Curva de Prenhez Acumulada (1 - S(t))
+#plot da Curva acumulada (1 - S(t))
 ggsurvplot(
   fit_km_pos, 
   data = dados_mf,
-  fun = "event",                     # Desenha a curva de prenhez acumulada
-  pval = TRUE,                      # Exibe o p-valor do Log-Rank
-  conf.int = TRUE,                  # Intervalo de confiança
+  fun = "event",                     
+  pval = TRUE,                      
+  conf.int = TRUE,                  
   legend.title = "Problema Pós-Parto",
   xlab = "Dias pós-parto",
   ylab = "Proporção de Vacas Prenhes Acumulada",
   ggtheme = theme_minimal()
 )
 
-# 2. Teste de Log-Rank para Estação do Ano
+#Teste de Log-Rank para Estação do Ano
 logrank_estacao <- survdiff(surv_obj_mf ~ Estacao, data = dados_mf)
 print(logrank_estacao)
 
-# --- Imputação Múltipla com MICE ---
+#semente para a Imputação Múltipla com MICE
 set.seed(123)
 
-# Selecionamos apenas as variáveis explicativas e o desfecho (ignorando ID_vaca)
-# Nota: Usamos 'leite_dia' (contínua) em vez de 'producao_leite' para evitar colinearidade
+#selecionando apenas as variáveis explicativas e o desfecho (ignorando ID_vaca)
+#usei 'leite_dia' (contínua) em vez de 'producao_leite' para evitar multicolinearidade
 dados_mice_prep <- dados %>% 
   select(-ID_vaca, -producao_leite)
 
-# Gera 5 bancos de dados imputados
+#gera 5 bancos de dados imputados
 dados_imp_mice <- mice(dados_mice_prep, m = 5, printFlag = FALSE)
 
-#####
-#descritiva
-####
 
-# Histograma do tempo até a concepção
+#abaixo segue a Análise Descritiva
+
+#histograma do tempo até a concepção
 ggplot(dados, aes(x = tempo_concep)) +
   geom_histogram(
     bins = 30,
@@ -144,7 +143,7 @@ ggplot(dados, aes(x = tempo_concep)) +
   ) +
   theme_minimal()
 
-# Boxplot do tempo até a concepção
+#boxplot do tempo até a concepção
 ggplot(dados, aes(y = tempo_concep)) +
   geom_boxplot() +
   labs(
@@ -153,7 +152,7 @@ ggplot(dados, aes(y = tempo_concep)) +
   ) +
   theme_minimal()
 
-#Distribuição da produção diária de leite
+#distribuição da produção diária de leite
 ggplot(dados, aes(x = leite_dia)) +
   geom_histogram(
     bins = 20,
@@ -166,7 +165,7 @@ ggplot(dados, aes(x = leite_dia)) +
   ) +
   theme_minimal()
 
-#Produção de leite × tempo até concepção
+#produção de leite vs tempo até concepção
 ggplot(
   dados,
   aes(
@@ -260,18 +259,13 @@ ggplot(
   ) +
   theme_minimal()
 
-###
-#sobrev.
-###
+#abaixo segue a Análise Não Paramétrica por Kaplan-Meier após a imputação por MICE
 
+#cria o objeto de sobrevivência
 surv_obj_mf <- Surv(
   time = dados_mf$tempo_concep,
   event = dados_mf$indic_tempo_concep
 )
-
-###
-#KM
-###
 
 #KM por sistema reprodutivo
 fit_km_repro <- survfit(
@@ -279,8 +273,8 @@ fit_km_repro <- survfit(
   data = dados_mf
 )
 
-#esse gráfico mostra a proporção acumulada de vacas que já apresentaram concepção.
-#Isso é mais intuitivo neste estudo do que mostrar a probabilidade de "sobrevivência" sem concepção.
+#o gráfico abaixo mostra a proporção acumulada de vacas que já apresentaram concepção
+#isso é mais intuitivo neste estudo do que mostrar a probabilidade de "sobrevivência" sem concepção
 ggsurvplot(
   fit_km_repro,
   data = dados_mf,
@@ -418,10 +412,6 @@ ggsurvplot(
 )
 
 
-###
-#Log-Rank
-##
-
 #log-rank por sistema reprodutivo
 logrank_repro <- survdiff(
   surv_obj_mf ~ sistema_reproducao,
@@ -552,7 +542,7 @@ resultado_logrank
 
 
 ###
-#Cox univariado
+#Modelos de Cox univariado
 ###
 
 #cox sistema reprodutivo
@@ -704,7 +694,7 @@ print(tabela_cox_final)
 
 
 ##
-#análise de diag.
+#análise de diagnóstico
 ##
 
 modelos_cox <- fit_cox_mice$analyses
@@ -717,7 +707,7 @@ diagnostico_ph <- lapply(
 
 diagnostico_ph
 
-#grafico da suposição dos riscos proporcionais (sepa fazer um for, mas fiquei com preguiça)
+#gráfico da suposição dos riscos proporcionais
 plot(
   diagnostico_ph[[1]],
   var = 1
@@ -744,16 +734,11 @@ ph_resultados <- lapply(
 print(ph_resultados)
 
 
-###
-#diag. resíiduos Schoenfeld
-##
+#análise de disgnóticos - resíiduos Schoenfeld
 cox.zph()
 plot(diagnostico_ph[[1]])
 
-###
-#diag. resíiduos deviance
-##
-#permite identificar observações potencialmente discrepantes
+#análise de disgnóticos - resíiduos deviance
 ggcoxdiagnostics(
   modelos_cox[[1]],
   type = "deviance",
@@ -761,10 +746,7 @@ ggcoxdiagnostics(
   ggtheme = theme_minimal()
 )
 
-###
-#diag. resíiduos martingale
-##
-#úteis principalmente para investigar a adequação da forma funcional das variáveis quantitativas
+#análise de disgnóticos - resíiduos martingale
 ggcoxdiagnostics(
   modelos_cox[[1]],
   type = "martingale",
@@ -772,10 +754,7 @@ ggcoxdiagnostics(
   ggtheme = theme_minimal()
 )
 
-###
-#diag. resíiduos DFBeta
-##
-#Se aparecerem observações muito discrepantes, podemos identificá-las
+#análise de disgnóticos - resíiduos DFBeta
 ggcoxdiagnostics(
   modelos_cox[[1]],
   type = "dfbeta",
@@ -784,10 +763,7 @@ ggcoxdiagnostics(
 )
 
 
-
-###
-#Concordância dos modelos
-##
+#concordância dos modelos
 concordancia <- sapply(
   modelos_cox,
   function(modelo) {
@@ -799,7 +775,7 @@ concordancia
 
 
 ##
-#Modelo sem tempo_parto_insem
+#modelo sem tempo_parto_insem
 ##
 
 dados_mice_prep2 <- dados %>%
@@ -921,17 +897,12 @@ for (i in 1:5) {
 
 par(mfrow = c(1, 1))
 
-# ============================================================
-# DIAGNÓSTICO DO MODELO DE COX
-# ============================================================
 
+#diagnóstico do modelo de Cox
 modelos_cox2 <- fit_cox_mice2$analyses
 
 
-# ------------------------------------------------------------
-# 1. TESTE DE RISCOS PROPORCIONAIS - RESÍDUOS DE SCHOENFELD
-# ------------------------------------------------------------
-
+#teste de riscos proporcionais - res[iduos de Schoenfeld
 diagnostico_ph2 <- lapply(
   modelos_cox2,
   cox.zph
@@ -940,7 +911,7 @@ diagnostico_ph2 <- lapply(
 diagnostico_ph2
 
 
-# Tabela resumida dos testes de Schoenfeld
+#tabela resumindo os testes de Schoenfeld
 ph_resultados2 <- lapply(
   seq_along(diagnostico_ph2),
   function(i) {
@@ -961,11 +932,9 @@ ph_resultados2 <- lapply(
 ph_resultados2
 
 
-# ------------------------------------------------------------
-# 2. GRÁFICOS DOS RESÍDUOS DE SCHOENFELD
-# ------------------------------------------------------------
+#gráficos dos resíduos de Schoenfeld
 
-# Gráficos da primeira imputação
+#gera os gráficos da primeira imputação
 par(mfrow = c(2, 3))
 
 plot(
@@ -976,17 +945,14 @@ plot(
 par(mfrow = c(1, 1))
 
 
-# Gráfico específico para leite_dia
+#gera o gráfico específico para leite_dia
 plot(
   diagnostico_ph2[[1]],
   var = "leite_dia"
 )
 
 
-# ------------------------------------------------------------
-# 3. RESÍDUOS DE MARTINGALE
-# ------------------------------------------------------------
-
+#resíduos de Martingale
 par(mfrow = c(2, 3))
 
 for (i in 1:5) {
@@ -1027,11 +993,7 @@ for (i in 1:5) {
 
 par(mfrow = c(1, 1))
 
-
-# ------------------------------------------------------------
-# 4. RESÍDUOS DE DEVIANCE
-# ------------------------------------------------------------
-
+#deviance
 par(mfrow = c(2, 3))
 
 for (i in 1:5) {
@@ -1059,11 +1021,7 @@ for (i in 1:5) {
 
 par(mfrow = c(1, 1))
 
-
-# ------------------------------------------------------------
-# 5. IDENTIFICAÇÃO DE POSSÍVEIS OBSERVAÇÕES ATÍPICAS
-# ------------------------------------------------------------
-
+#identifica observações atípicas
 for (i in 1:5) {
   
   modelo <- modelos_cox2[[i]]
@@ -1092,11 +1050,7 @@ for (i in 1:5) {
   }
 }
 
-
-# ------------------------------------------------------------
-# 6. DFBETA - INFLUÊNCIA DAS OBSERVAÇÕES
-# ------------------------------------------------------------
-
+#confere a influência das observações
 par(mfrow = c(2, 3))
 
 for (i in 1:5) {
@@ -1125,10 +1079,6 @@ for (i in 1:5) {
 
 par(mfrow = c(1, 1))
 
-
-# ------------------------------------------------------------
-# 7. MAIOR INFLUÊNCIA POR OBSERVAÇÃO
-# ------------------------------------------------------------
 
 influencia_dfbeta <- lapply(
   seq_along(modelos_cox2),
@@ -1160,8 +1110,7 @@ influencia_dfbeta
 
 
 
-# Mostrar as 10 observações mais influentes de cada imputação
-
+#mostra as 10 observações mais influentes de cada imputação
 influencia_dfbeta %>%
   bind_rows() %>%
   group_by(Imputacao) %>%
@@ -1172,10 +1121,8 @@ influencia_dfbeta %>%
   arrange(Imputacao, desc(DFBeta_max))
 
 
-# ------------------------------------------------------------
-# 8. ÍNDICE DE CONCORDÂNCIA
-# ------------------------------------------------------------
 
+#calcula o índice de concordância do modelo
 concordancias2 <- sapply(
   modelos_cox2,
   function(modelo) {
@@ -1191,21 +1138,13 @@ media_concordancia2 <- mean(
 
 media_concordancia2
 
-
-# ------------------------------------------------------------
-# 9. RESUMO DA CONCORDÂNCIA
-# ------------------------------------------------------------
-
 data.frame(
   Imputacao = 1:5,
   Concordancia = concordancias2
 )
 
 
-# ------------------------------------------------------------
-# 10. CURVA DE SOBREVIVÊNCIA ESTIMADA
-# ------------------------------------------------------------
-
+#plota a curva de sobrevivência estimada
 modelo1 <- modelos_cox2[[1]]
 
 ajuste_surv <- survfit(
@@ -1220,10 +1159,7 @@ plot(
   lwd = 2
 )
 
-# ============================================================
-# INVESTIGAÇÃO DAS OBSERVAÇÕES MAIS INFLUENTES
-# ============================================================
-
+#investiga as observações mais influentes
 for (i in 1:5) {
   
   modelo <- modelos_cox2[[i]]
@@ -1252,8 +1188,7 @@ for (i in 1:5) {
   )
 }
 
-# Observações mais influentes da imputação 1
-
+#identifica as observações mais influentes da imputação 1
 modelo <- modelos_cox2[[1]]
 
 dfbeta <- residuals(modelo, type = "dfbeta")
@@ -1264,8 +1199,8 @@ maiores <- order(influencia, decreasing = TRUE)[1:10]
 
 dados_imp_mice2$data[[1]][maiores, ]
 
-# Observações com resíduos de Deviance elevados
 
+#identifica as observações com resíduos de Deviance elevados
 for (i in 1:5) {
   
   modelo <- modelos_cox2[[i]]
@@ -1299,28 +1234,26 @@ for (i in 1:5) {
 }
 
 
-# Dados completos da imputação 1
+#dados completos da imputação 1
 dados_comp1 <- complete(dados_imp_mice2, 1)
 
-# Ver a observação 78
+#checa a observação 78
 dados_comp1
 
 dados_comp1[maiores, ]
 
-# ============================================================
-# ANÁLISE DE SENSIBILIDADE - OBSERVAÇÃO 78
-# ============================================================
 
-# Dados completos da imputação 1
+#análise de sensibilidade da observação 78
+#dados completos da imputação 1
 dados_comp1 <- complete(dados_imp_mice2, 1)
 
-# Modelo original
+#modelo original
 modelo_original <- modelos_cox2[[1]]
 
-# Retirar a observação 78
+#retira a observação 78
 dados_sem78 <- dados_comp1[-78, ]
 
-# Reajustar o modelo
+#reajusta o modelo
 modelo_sem78 <- coxph(
   Surv(tempo_concep, indic_tempo_concep) ~
     Estacao +
@@ -1332,17 +1265,17 @@ modelo_sem78 <- coxph(
   data = dados_sem78
 )
 
-# Comparar os modelos
+#compara os modelos
 summary(modelo_original)
 summary(modelo_sem78)
 
-# HR e IC do modelo original
+#HR e IC do modelo original
 exp(cbind(
   HR = coef(modelo_original),
   confint(modelo_original)
 ))
 
-# HR e IC sem a observação 78
+#HR e IC sem a observação 78
 exp(cbind(
   HR = coef(modelo_sem78),
   confint(modelo_sem78)
